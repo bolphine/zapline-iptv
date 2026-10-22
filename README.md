@@ -58,7 +58,9 @@ ZAPLINE_KEY_PASSWORD=...
 ### CI and releases
 
 - `.github/workflows/ci.yml` runs the tests on every push and pull request.
-- `.github/workflows/release.yml` builds a signed APK when a `v*` tag is pushed and attaches it to a GitHub release.
+- `.github/workflows/release.yml` publishes a release whenever `main` carries a `versionName` that has no
+  release yet. To ship, bump `versionCode`/`versionName` in `app/build.gradle.kts` and push. It also runs for
+  `v*` tags and from the Actions tab ("Run workflow").
   It needs these repository secrets: `ZAPLINE_KEYSTORE_BASE64` (the keystore, base64-encoded),
   `ZAPLINE_KEYSTORE_PASSWORD`, `ZAPLINE_KEY_ALIAS` and `ZAPLINE_KEY_PASSWORD`.
 
