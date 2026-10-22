@@ -53,13 +53,33 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         if: steps.version.outputs.exists == 'false'
 
-      - name: Restore signing key
+      - name: Restore and check the signing key
         if: steps.version.outputs.exists == 'false'
         env:
           KEYSTORE_BASE64: ${{ secrets.ZAPLINE_KEYSTORE_BASE64 }}
+          STORE_PW: ${{ secrets.ZAPLINE_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ZAPLINE_KEY_ALIAS }}
+          KEY_PW: ${{ secrets.ZAPLINE_KEY_PASSWORD }}
         run: |
-          if [ -z "$KEYSTORE_BASE64" ]; then echo "ZAPLINE_KEYSTORE_BASE64 secret is missing" >&2; exit 1; fi
-          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          # Report problems as annotations (never the values themselves).
+          missing=""
+          [ -z "$KEYSTORE_BASE64" ] && missing="$missing ZAPLINE_KEYSTORE_BASE64"
+          [ -z "$STORE_PW" ] && missing="$missing ZAPLINE_KEYSTORE_PASSWORD"
+          [ -z "$KEY_ALIAS" ] && missing="$missing ZAPLINE_KEY_ALIAS"
+          [ -z "$KEY_PW" ] && missing="$missing ZAPLINE_KEY_PASSWORD"
+          if [ -n "$missing" ]; then echo "::error::Missing or empty repository secrets:$missing"; exit 1; fi
+          # Tolerate pasted whitespace or line breaks in the base64 value.
+          if ! printf '%s' "$KEYSTORE_BASE64" | tr -d ' \r\n\t' | base64 -d > "$RUNNER_TEMP/release.jks" 2>/dev/null; then
+            echo "::error::ZAPLINE_KEYSTORE_BASE64 isn't valid base64 (copy the whole long line, nothing else)"; exit 1
+          fi
+          echo "Keystore: $(wc -c < "$RUNNER_TEMP/release.jks") bytes"
+          if ! keytool -list -keystore "$RUNNER_TEMP/release.jks" -storepass "$STORE_PW" >/dev/null 2>&1; then
+            echo "::error::Keystore didn't open: ZAPLINE_KEYSTORE_PASSWORD is wrong or ZAPLINE_KEYSTORE_BASE64 is incomplete"; exit 1
+          fi
+          if ! keytool -list -keystore "$RUNNER_TEMP/release.jks" -storepass "$STORE_PW" -alias "$KEY_ALIAS" >/dev/null 2>&1; then
+            echo "::error::No key called '$KEY_ALIAS' in the keystore: ZAPLINE_KEY_ALIAS should be zapline"; exit 1
+          fi
+          echo "::notice::Signing key OK"
 
       - name: Tests
         if: steps.version.outputs.exists == 'false'
