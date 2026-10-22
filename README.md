@@ -1,5 +1,7 @@
 # Zapline IPTV
 
+Note: This is AI generated but it's already much better than anything I could find on the market, completely open source, no premium features 
+
 A fast, good-looking IPTV player for Android phones. It's built for big playlists: tens of thousands of channels,
 with sane language/country filtering, duplicate merging and a proper TV guide.
 
