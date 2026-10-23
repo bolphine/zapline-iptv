@@ -6,7 +6,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.mediarouter.media.MediaRouteSelector
 import androidx.mediarouter.media.MediaRouter
-import com.zapline.iptv.MainActivity
 import com.zapline.iptv.model.Channel
 import com.google.android.gms.cast.CastMediaControlIntent
 import com.google.android.gms.cast.HlsSegmentFormat
@@ -22,17 +21,15 @@ import com.google.android.gms.cast.framework.OptionsProvider
 import com.google.android.gms.cast.framework.SessionManagerListener
 import com.google.android.gms.cast.framework.SessionProvider
 import com.google.android.gms.cast.framework.media.CastMediaOptions
-import com.google.android.gms.cast.framework.media.NotificationOptions
 import com.google.android.gms.cast.framework.media.RemoteMediaClient
 import com.google.android.gms.common.images.WebImage
 
 /** Uses Google's Default Media Receiver, so no receiver app has to be registered. */
 class CastOptionsProvider : OptionsProvider {
     override fun getCastOptions(context: Context): CastOptions {
-        // A media notification while casting: TV controls on the lock screen, and it keeps Zapline
-        // (and so the stream relay on this phone) running when you leave the app.
-        val notification = NotificationOptions.Builder().setTargetActivityClassName(MainActivity::class.java.name).build()
-        val media = CastMediaOptions.Builder().setNotificationOptions(notification).build()
+        // Zapline shows its own casting notification from CastService (which also keeps the relay running with
+        // the screen off), so the framework's one is turned off to avoid two.
+        val media = CastMediaOptions.Builder().setNotificationOptions(null).build()
         return CastOptions.Builder()
             .setReceiverApplicationId(CastMediaControlIntent.DEFAULT_MEDIA_RECEIVER_APPLICATION_ID)
             .setStopReceiverApplicationWhenEndingSession(true)
@@ -140,6 +137,7 @@ class Caster(ctx: Context, private val onConnected: (Boolean) -> Unit) {
         client = s.remoteMediaClient?.also { it.registerCallback(remoteCallback) }
         if (state == State.CONNECTING || state == State.IDLE) state = State.LOADING
         message = null
+        CastService.show(app, deviceName ?: "TV", nowTitle)
         onConnected(true)
     }
 
@@ -151,6 +149,7 @@ class Caster(ctx: Context, private val onConnected: (Boolean) -> Unit) {
         state = if (msg != null) State.ERROR else State.IDLE
         message = msg
         CastProxy.stopLive()
+        CastService.stop(app)
         if (was || msg == null) onConnected(false)
     }
 
@@ -209,6 +208,7 @@ class Caster(ctx: Context, private val onConnected: (Boolean) -> Unit) {
             }
             .build()
         state = State.LOADING; message = null; nowTitle = title; loadedUrl = url
+        deviceName?.let { CastService.show(app, it, title) }
         try {
             c.load(MediaLoadRequestData.Builder().setMediaInfo(info).setAutoplay(true)
                 .setCurrentTime(if (live) 0 else positionMs).build())

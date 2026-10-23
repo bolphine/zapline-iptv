@@ -115,8 +115,13 @@ object CastProxy {
         segmenters.clear()
     }
 
+    /**
+     * The same URL always gets the same id, so a refreshed HLS playlist names segments the TV has
+     * already played exactly as before (otherwise it can mistake them for new ones and replay them).
+     */
     private fun register(s: Source): String {
-        val id = java.util.UUID.randomUUID().toString().replace("-", "").take(16)
+        val digest = java.security.MessageDigest.getInstance("SHA-1").digest((s.url + "\u0000" + s.headers.toSortedMap()).toByteArray())
+        val id = digest.take(8).joinToString("") { "%02x".format(it) }
         sources[id] = s
         if (sources.size > 4000) sources.keys.take(1000).forEach { sources.remove(it) }   // long HLS sessions
         return id
@@ -289,9 +294,12 @@ class TsSegmenter(private val src: CastProxy.Source, private val connect: ((Cast
 
     companion object {
         const val TARGET = 2.0         // seconds; cut at the first keyframe after this
-        const val FORCE = 8.0          // cut even without a keyframe flag
-        const val KEEP = 12            // segments kept in memory
-        const val WINDOW = 6           // segments listed in the playlist
+        const val FORCE = 6.0          // cut even without a keyframe flag
+        /** Fixed: players expect #EXT-X-TARGETDURATION never to change during a stream. */
+        const val TARGET_DURATION = 6
+        const val KEEP = 40            // segments kept in memory (~80 s)
+        const val WINDOW = 15          // segments listed in the playlist (~30 s), so a TV that fell behind can catch up
+        const val START_SEGMENTS = 3   // segments ready before the first playlist, so the TV starts with a buffer
         const val IDLE_MS = 45_000L    // stop pulling from the provider once the TV stops asking
         private const val WRAP = 1L shl 33
     }
@@ -303,7 +311,10 @@ class TsSegmenter(private val src: CastProxy.Source, private val connect: ((Cast
         thread(name = "ts-segmenter", isDaemon = true) { loop() }
     }
 
+    @Volatile private var stopped = false
+
     fun stop() {
+        stopped = true
         running = false
         try { input?.close() } catch (_: Exception) {}
     }
@@ -333,9 +344,12 @@ class TsSegmenter(private val src: CastProxy.Source, private val connect: ((Cast
                 try { input?.close() } catch (_: Exception) {}
             }
             if (!running) break
-            // Reconnect: the next segment is marked as a discontinuity so the TV resets its decoder.
+            // Reconnect. Providers usually resend the last few seconds they had buffered: those are skipped
+            // (see onPacket) so the TV never sees the same moment twice, and the timeline carries on unbroken.
             finishSegment(lastPts, force = true)
-            curDisc = true
+            resumeAfterPts = lastPts
+            skipStartedAt = 0L
+            firstSeenPts = -1
             curStarted = false
             failures++
             Thread.sleep((failures * 1_000L).coerceAtMost(5_000))
@@ -381,13 +395,34 @@ class TsSegmenter(private val src: CastProxy.Source, private val connect: ((Cast
         if (pid == clockPid && pusi && payload < 188) {
             val pts = readPts(p, payload)
             if (pts >= 0) {
-                lastPts = pts
                 val isKey = rai || (videoPid < 0)
                 if (!curStarted) {
-                    // Start the first segment at a keyframe (or give up waiting after a few seconds of timestamps).
-                    if (isKey || (firstSeenPts >= 0 && dur(firstSeenPts, pts) > 3.0)) beginSegment(pts)
-                    if (firstSeenPts < 0) firstSeenPts = pts
+                    val resume = resumeAfterPts
+                    if (resume >= 0) {
+                        val d = dur(resume, pts)
+                        val now = System.currentTimeMillis()
+                        if (skipStartedAt == 0L) skipStartedAt = now
+                        when {
+                            // Already sent to the TV: skip (but never for long, in case the provider restarted its clock).
+                            d <= 0.02 && d > -30.0 && now - skipStartedAt < 8_000 -> return
+                            // Carries straight on from where we were: no discontinuity, the TV doesn't notice.
+                            d > 0.02 && d < 15.0 -> if (isKey || (firstSeenPts >= 0 && dur(firstSeenPts, pts) > 3.0)) {
+                                resumeAfterPts = -1; beginSegment(pts)
+                            }
+                            // A different timeline: tell the TV so it resets cleanly.
+                            else -> if (isKey || (firstSeenPts >= 0 && dur(firstSeenPts, pts) > 3.0)) {
+                                resumeAfterPts = -1; curDisc = true; beginSegment(pts)
+                            }
+                        }
+                        if (firstSeenPts < 0) firstSeenPts = pts
+                    } else {
+                        // Start the first segment at a keyframe (or give up waiting after a few seconds of timestamps).
+                        if (isKey || (firstSeenPts >= 0 && dur(firstSeenPts, pts) > 3.0)) beginSegment(pts)
+                        if (firstSeenPts < 0) firstSeenPts = pts
+                    }
+                    if (curStarted) lastPts = pts
                 } else {
+                    lastPts = pts
                     val d = dur(curStartPts, pts)
                     if ((isKey && d >= TARGET) || d >= FORCE || cur.size() > 12 * 1024 * 1024) {
                         finishSegment(pts, force = false)
@@ -400,6 +435,9 @@ class TsSegmenter(private val src: CastProxy.Source, private val connect: ((Cast
     }
 
     private var firstSeenPts = -1L
+    /** After a reconnect: video up to this PTS has already gone to the TV. */
+    private var resumeAfterPts = -1L
+    private var skipStartedAt = 0L
 
     private fun beginSegment(pts: Long) {
         cur = java.io.ByteArrayOutputStream(1024 * 1024)
@@ -482,15 +520,17 @@ class TsSegmenter(private val src: CastProxy.Source, private val connect: ((Cast
     /** Rolling live playlist; waits for the first couple of segments so the TV starts with some buffer. */
     fun playlist(waitMs: Long): String? {
         lastAccess = System.currentTimeMillis()
+        // Paused on the TV for a while, so we stopped pulling from the provider: pick the stream up again.
+        if (!running && !stopped) { resumeAfterPts = lastPts; skipStartedAt = 0L; firstSeenPts = -1; curStarted = false; start() }
         val deadline = System.currentTimeMillis() + waitMs
         synchronized(lock) {
-            while (segments.size < 2) {
+            while (segments.size < START_SEGMENTS) {
                 val left = deadline - System.currentTimeMillis()
                 if (left <= 0 || !running) return null
                 lock.wait(minOf(left, 500))
             }
             val win = segments.toList().takeLast(WINDOW)
-            val target = kotlin.math.ceil(win.maxOf { it.duration }).toInt().coerceAtLeast(2)
+            val target = maxOf(TARGET_DURATION, kotlin.math.ceil(win.maxOf { it.duration }).toInt())
             val sb = StringBuilder("#EXTM3U\n#EXT-X-VERSION:3\n")
             sb.append("#EXT-X-TARGETDURATION:").append(target).append('\n')
             sb.append("#EXT-X-MEDIA-SEQUENCE:").append(win.first().seq).append('\n')

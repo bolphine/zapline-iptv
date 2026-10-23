@@ -19,8 +19,8 @@ android {
         applicationId = "com.zapline.iptv"
         minSdk = 26
         targetSdk = 35
-        versionCode = 17
-        versionName = "2.0"
+        versionCode = 18
+        versionName = "2.1"
     }
 
     // Release signing comes from outside the repo: environment variables (CI) or a local, git-ignored

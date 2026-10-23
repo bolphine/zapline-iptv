@@ -200,6 +200,9 @@ object Health {
     /** Set by the player while it's on screen: checks never compete with what you're watching. */
     @Volatile var watching = false
         set(v) { field = v; if (v) StreamProbe.cancelInFlight() }   // the channel you open gets the connection
+    /** True while a TV is connected: the cast stream has the provider connection, even with the phone locked. */
+    @Volatile var casting = false
+        set(v) { field = v; if (v) StreamProbe.cancelInFlight() }
     private var scanJob: Job? = null
 
     /** How long a result stays fresh before the background check looks again. */
@@ -254,7 +257,7 @@ object Health {
                     val wait = confirmGapMs - (System.currentTimeMillis() - lastProbeEnd).coerceAtLeast(0)
                     if (wait > 0) { publish(st.copy(paused = "Rechecking ${queue.size} that failed, shortly…")); delay(wait) }
                 }
-                if (watching) { publish(st.copy(paused = "Paused while you watch")); delay(3_000); continue }
+                if (watching || casting) { publish(st.copy(paused = if (casting) "Paused while casting" else "Paused while you watch")); delay(3_000); continue }
                 // Never take a connection someone else is using: some providers drop the oldest viewer when
                 // a new connection arrives at the limit. Ask the provider first (and every minute).
                 if (XtreamAuth.creds(prefs) != null && System.currentTimeMillis() - lastAccountCheck > 60_000) {
