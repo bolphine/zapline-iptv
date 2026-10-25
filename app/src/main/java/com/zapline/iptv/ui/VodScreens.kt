@@ -67,7 +67,6 @@ import com.zapline.iptv.parse.Xtream
 import com.zapline.iptv.player.PlayEntry
 import kotlinx.coroutines.flow.MutableStateFlow
 
-fun movieEntry(c: Channel) = PlayEntry("vod|${c.url}", c.name, listOf(c))
 
 /** Movies (isSeries = false) or the list of shows (isSeries = true). */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -375,20 +374,6 @@ fun ShowScreen(vm: MainViewModel, show: Channel, onBack: () -> Unit, onPlay: (Li
     }
 }
 
-/** Episodes as a player queue; each is registered so the player can note progress through the show. */
-fun episodeQueue(show: Channel, list: List<Xtream.Episode>): List<PlayEntry> = list.map { ep ->
-    com.zapline.iptv.data.SeriesWatch.register(ep.url, com.zapline.iptv.data.SeriesWatch.Ref(show.url, show.name, show.logo, episodeCode(ep)))
-    PlayEntry("vod|${ep.url}", episodeTitle(show, ep), listOf(Channel(episodeTitle(show, ep), ep.url, show.name, logo = ep.image ?: show.logo)))
-}
-
-private fun episodeCode(e: Xtream.Episode): String =
-    if (e.season > 0 || e.number > 0) "S${e.season} E${e.number}" else ""
-
-private fun episodeTitle(show: Channel, e: Xtream.Episode): String {
-    val code = episodeCode(e)
-    val t = e.title.removePrefix(show.name).trim(' ', '-', '|', ':')
-    return listOfNotNull(show.name, code.ifEmpty { null }, t.takeIf { it.isNotEmpty() && !it.equals(code, true) }).joinToString("  ")
-}
 
 @Composable
 private fun EpisodeRow(e: Xtream.Episode, started: Boolean, onClick: () -> Unit) {

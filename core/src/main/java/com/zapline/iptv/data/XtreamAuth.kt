@@ -104,5 +104,5 @@ object XtreamAuth {
     /** A full playlist download is itself a sign-in. */
     fun markSignedIn() { lastOk = System.currentTimeMillis() }
 
-    internal fun resetForTests() { lastOk = 0 }
+    fun resetForTests() { lastOk = 0 }
 }

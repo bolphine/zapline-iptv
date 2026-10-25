@@ -1,6 +1,5 @@
 package com.zapline.iptv.data
 
-import android.content.Context
 import com.zapline.iptv.model.Channel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -96,9 +95,9 @@ object Health {
     private val io = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var saveJob: Job? = null
 
-    fun load(ctx: Context) {
+    fun load(dir: File) {
         if (loaded) return
-        val f = File(ctx.filesDir, "health.jsonl").also { file = it }
+        val f = File(dir, "health.jsonl").also { file = it }
         loaded = true
         if (!f.exists()) return
         try {
@@ -120,7 +119,7 @@ object Health {
 
     /** Two failures at least this far apart before a channel is called dead (shortened in tests). */
     @Volatile var confirmGapMs = 2 * 60_000L
-        internal set
+        set
 
     fun put(url: String, raw: StreamInfo) {
         val old = map[url]
@@ -165,7 +164,7 @@ object Health {
     fun markFailed(url: String, note: String, busy: Boolean) =
         put(url, StreamInfo(if (busy) StreamInfo.BUSY else StreamInfo.DEAD, checkedAt = System.currentTimeMillis(), note = note))
 
-    internal fun resetForTests() { generation++; scanJob?.cancel(); map.clear(); loaded = false; file = null; watching = false; scan.value = ScanState() }
+    fun resetForTests() { generation++; scanJob?.cancel(); map.clear(); loaded = false; file = null; watching = false; scan.value = ScanState() }
 
     fun clear() { map.clear(); version.value++; scheduleSave() }
 

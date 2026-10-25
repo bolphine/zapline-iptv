@@ -17,11 +17,13 @@ import com.zapline.iptv.player.PlayerActivity
 import com.zapline.iptv.ui.AppRoot
 import com.zapline.iptv.ui.ZaplineTheme
 import com.zapline.iptv.ui.MainViewModel
+import com.zapline.iptv.ui.MainViewModelHolder
 import com.zapline.iptv.ui.Palette
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
-    private val vm: MainViewModel by viewModels()
+    private val holder: MainViewModelHolder by viewModels()
+    private val vm: MainViewModel get() = holder.vm
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge(

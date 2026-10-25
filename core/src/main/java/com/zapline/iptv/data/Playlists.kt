@@ -1,6 +1,5 @@
 package com.zapline.iptv.data
 
-import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -93,8 +92,8 @@ object Backup {
     /** Device-specific or bulky keys that shouldn't travel between phones. */
     private val skip = setOf("fileUri")
 
-    fun export(ctx: Context): String {
-        val prefs = Prefs(ctx).p.all
+    fun export(p: Prefs): String {
+        val prefs = p.p.all
         val o = JSONObject()
         for ((k, v) in prefs) {
             if (k in skip) continue
@@ -111,11 +110,11 @@ object Backup {
     }
 
     /** Returns the number of settings restored; throws IllegalArgumentException for a file that isn't a backup. */
-    fun import(ctx: Context, text: String): Int {
+    fun import(p: Prefs, text: String): Int {
         val root = try { JSONObject(text) } catch (e: Exception) { throw IllegalArgumentException("That file isn't a Zapline backup") }
         if (root.optString("format") !in READABLE) throw IllegalArgumentException("That file isn't a Zapline backup")
         val o = root.optJSONObject("prefs") ?: throw IllegalArgumentException("The backup is empty")
-        val ed = Prefs(ctx).p.edit()
+        val ed = p.p.edit()
         var n = 0
         for (k in o.keys()) {
             val v = o.optJSONObject(k) ?: continue

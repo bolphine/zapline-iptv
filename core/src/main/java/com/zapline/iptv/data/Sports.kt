@@ -224,7 +224,7 @@ object Sports {
         return sorted
     }
 
-    internal fun setTodayForTests(list: List<Match>?) { cache = list?.let { System.currentTimeMillis() to it } }
+    fun setTodayForTests(list: List<Match>?) { cache = list?.let { System.currentTimeMillis() to it } }
 
     /** Live refresh of the one game being watched: a single request for its competition. */
     suspend fun single(m: Match): Match? = withContext(Dispatchers.IO) {

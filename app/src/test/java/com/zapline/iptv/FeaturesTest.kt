@@ -118,16 +118,16 @@ class FeaturesTest {
         p.p.edit().clear().commit()
         p.favourites = setOf("http://a", "http://b"); p.favOrder = listOf("http://b", "http://a")
         p.rules = "UK* => en"; p.accent = 0xFF33CCFF.toInt(); p.adultPin = "4321"; p.subtitlesOn = true
-        val json = Backup.export(ctx)
+        val json = Backup.export(Prefs(ctx))
         p.p.edit().clear().commit()
         assertTrue(p.favourites.isEmpty())
-        val n = Backup.import(ctx, json)
+        val n = Backup.import(Prefs(ctx), json)
         assertTrue(n >= 6)
         assertEquals(setOf("http://a", "http://b"), p.favourites)
         assertEquals(listOf("http://b", "http://a"), p.favOrder)
         assertEquals("UK* => en", p.rules); assertEquals(0xFF33CCFF.toInt(), p.accent)
         assertEquals("4321", p.adultPin); assertTrue(p.subtitlesOn)
-        try { Backup.import(ctx, "{\"hello\":1}"); throw AssertionError("should reject") } catch (e: IllegalArgumentException) {}
+        try { Backup.import(Prefs(ctx), "{\"hello\":1}"); throw AssertionError("should reject") } catch (e: IllegalArgumentException) {}
     }
 
     @Test fun seriesProgressIsTrackedPerShow() {

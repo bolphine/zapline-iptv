@@ -92,6 +92,7 @@ dependencies {
     implementation("androidx.mediarouter:mediarouter:1.7.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
 
+    implementation(project(":core"))
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("io.coil-kt:coil-compose:2.7.0")
     // Streaming JSON reader: Xtream catalogues can be tens of MB, too big to hold as one string on a phone.

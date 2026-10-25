@@ -1,21 +1,18 @@
 package com.zapline.iptv.ui
 
-import android.app.Application
-import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.viewModelScope
 import com.zapline.iptv.data.EpgData
 import com.zapline.iptv.data.Health
 import com.zapline.iptv.data.StreamInfo
 import com.zapline.iptv.data.Catchup
 import com.zapline.iptv.data.Programme
 import com.zapline.iptv.data.Reminder
-import com.zapline.iptv.data.Reminders
 import com.zapline.iptv.data.Playlists
 import com.zapline.iptv.data.SavedPlaylist
 import com.zapline.iptv.data.EpgStore
 import com.zapline.iptv.data.Library
 import com.zapline.iptv.data.M3U_SERIES_SCHEME
 import com.zapline.iptv.data.Repository
+import com.zapline.iptv.data.Platform
 import com.zapline.iptv.parse.PlaylistFilters
 import com.zapline.iptv.parse.Xtream
 import com.zapline.iptv.lang.Categories
@@ -140,8 +137,14 @@ private data class Filters(
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
-class MainViewModel(app: Application) : AndroidViewModel(app) {
-    private val repo = Repository(app)
+/**
+ * Everything behind the app's screens, shared by the phone and Windows apps: the channel list with
+ * filters, duplicates merged and best versions first, search, guide, catch-up, sport, channel checks,
+ * playlists and settings. [scope] is the screen's lifetime (Android's viewModelScope on the phone).
+ */
+class MainViewModel(private val platform: Platform, scope: kotlinx.coroutines.CoroutineScope) {
+    private val viewModelScope = scope
+    private val repo = platform.repository
     val prefs get() = repo.prefs
 
     private val all = MutableStateFlow<List<Channel>>(emptyList())
@@ -331,7 +334,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
-            Health.load(app)
+            Health.load(platform.filesDir)
             var seen = Health.version.value
             healthTick.value++
             while (true) {
@@ -676,24 +679,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun stopChecking() = Health.stopScan()
     fun forgetHealth() { Health.stopScan(); Health.clear() }
 
-    private fun isMetered(): Boolean = try {
-        val cm = getApplication<Application>().getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-        cm.isActiveNetworkMetered
-    } catch (_: Exception) { true }
+    private fun isMetered(): Boolean = platform.isMetered()
 
     // ---- reminders ----
 
-    private val ctx get() = getApplication<Application>()
-    val reminders = MutableStateFlow(Reminders.all(ctx))
+    val reminders = MutableStateFlow(platform.reminders.all())
 
     fun hasReminder(r: List<Reminder>, e: Entry, p: Programme) = r.any { it.channelKey == e.key && it.start == p.start }
 
     fun addReminder(e: Entry, p: Programme) {
-        Reminders.add(ctx, Reminder(p.title, e.key, e.name, epgIds.value[e.key], p.start))
-        reminders.value = Reminders.all(ctx)
+        platform.reminders.add(Reminder(p.title, e.key, e.name, epgIds.value[e.key], p.start))
+        reminders.value = platform.reminders.all()
     }
 
-    fun removeReminder(r: Reminder) { Reminders.remove(ctx, r); reminders.value = Reminders.all(ctx) }
+    fun removeReminder(r: Reminder) { platform.reminders.remove(r); reminders.value = platform.reminders.all() }
 
     fun removeReminder(e: Entry, p: Programme) {
         reminders.value.firstOrNull { it.channelKey == e.key && it.start == p.start }?.let { removeReminder(it) }
@@ -817,8 +816,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         hiddenGroups.value = prefs.hiddenGroups; rulesText.value = prefs.rules; recentKeys.value = prefs.recents
         hasSource.value = prefs.sourceType.isNotEmpty()
         playlists.value = Playlists.all(prefs)
-        reminders.value = Reminders.all(ctx)
-        Reminders.rescheduleAll(ctx)
+        reminders.value = platform.reminders.all()
+        platform.reminders.rescheduleAll()
     }
 
     private fun friendly(e: Exception): String = when (e) {

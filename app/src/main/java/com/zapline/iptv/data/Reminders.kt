@@ -15,17 +15,6 @@ import com.zapline.iptv.R
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** A programme the viewer asked to be reminded about. */
-data class Reminder(
-    val title: String,
-    val channelKey: String,
-    val channelName: String,
-    val epgId: String?,
-    val start: Long,
-) {
-    /** Stable id: one reminder per channel and start time. */
-    val id: Int get() = (channelKey + start).hashCode()
-}
 
 object Reminders {
     const val EXTRA_PLAY_KEY = "playKey"

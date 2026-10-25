@@ -1,11 +1,9 @@
 package com.zapline.iptv.data
 
-import android.content.Context
 import org.json.JSONObject
 
 /** Small persisted settings: playlist source, filters, favourites, overrides, rules. */
-class Prefs(context: Context) {
-    internal val p = context.getSharedPreferences("zapline", Context.MODE_PRIVATE)
+class Prefs(val p: KeyValueStore) {
 
     private fun str(key: String, def: String = "") = p.getString(key, def) ?: def
     private fun put(key: String, v: String) = p.edit().putString(key, v).apply()

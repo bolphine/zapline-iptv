@@ -1,7 +1,5 @@
 package com.zapline.iptv.data
 
-import android.content.Context
-import android.net.Uri
 import com.zapline.iptv.lang.LanguageTagger
 import com.zapline.iptv.lang.RegionTagger
 import com.zapline.iptv.model.Channel
@@ -16,8 +14,6 @@ import java.io.File
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
-const val DEFAULT_USER_AGENT = "VLC/3.0.21 LibVLC/3.0.21"
-const val M3U_SERIES_SCHEME = "m3useries:"
 
 /** Everything loaded from the playlist, split into sections. */
 data class Library(
@@ -31,13 +27,22 @@ data class Library(
     val warning: String? = null,
 )
 
-class Repository(private val context: Context) {
-    val prefs = Prefs(context)
-    private val liveFile = File(context.filesDir, "channels.bin")
-    private val moviesFile = File(context.filesDir, "movies.bin")
-    private val seriesFile = File(context.filesDir, "series.bin")
-    private val episodesFile = File(context.filesDir, "episodes.bin")
-    private val epgFile = File(context.filesDir, "epg.bin")
+/**
+ * Downloads, parses and caches playlists and the TV guide.
+ * [openFile] opens a playlist the user picked (a content URI on Android, a path on Windows);
+ * [newXmlParser] makes an XML pull parser (Android has one built in; desktop uses kxml2).
+ */
+class Repository(
+    private val dir: File,
+    val prefs: Prefs,
+    private val openFile: (String) -> java.io.InputStream?,
+    private val newXmlParser: () -> org.xmlpull.v1.XmlPullParser,
+) {
+    private val liveFile = File(dir, "channels.bin")
+    private val moviesFile = File(dir, "movies.bin")
+    private val seriesFile = File(dir, "series.bin")
+    private val episodesFile = File(dir, "episodes.bin")
+    private val epgFile = File(dir, "epg.bin")
 
     private val http = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
@@ -83,7 +88,7 @@ class Repository(private val context: Context) {
                     try { fetchXtream(creds, wantVod, progress) } catch (e: IOException) { split(fetchM3u(url, progress), wantVod) }
                 } else split(fetchM3u(url, progress), wantVod)
             }
-            "file" -> split(readFile(Uri.parse(prefs.fileUri), progress), wantVod)
+            "file" -> split(readFile(prefs.fileUri, progress), wantVod)
             else -> throw IOException("No playlist set up")
         }
         progress("Tidying…")
@@ -205,9 +210,9 @@ class Repository(private val context: Context) {
         }
     }
 
-    private fun readFile(uri: Uri, progress: (String) -> Unit): List<Channel> {
+    private fun readFile(uri: String, progress: (String) -> Unit): List<Channel> {
         progress("Reading file…")
-        val input = context.contentResolver.openInputStream(uri) ?: throw IOException("Couldn't open that file")
+        val input = try { openFile(uri) } catch (e: Exception) { null } ?: throw IOException("Couldn't open that file")
         return input.bufferedReader().use { r ->
             val res = M3uParser.parse(r) { n -> progress("Reading playlist… ${"%,d".format(n)} entries") }
             prefs.playlistEpgUrl = res.epgUrl ?: ""
@@ -247,7 +252,7 @@ class Repository(private val context: Context) {
                 progress("Downloading TV guide…")
                 get(u).use { resp ->
                     val input = XmltvParser.maybeGunzip(resp.body!!.byteStream())
-                    val parser = android.util.Xml.newPullParser()
+                    val parser = newXmlParser()
                     parser.setFeature(org.xmlpull.v1.XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
                     parser.setInput(input, null)
                     val e = XmltvParser.parse(parser, ids, nameKeys, from, to) { n -> progress("Reading TV guide… ${"%,d".format(n)} programmes") }

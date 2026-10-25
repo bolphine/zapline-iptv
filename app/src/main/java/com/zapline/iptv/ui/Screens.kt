@@ -929,7 +929,7 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit, onNavigate: (String) -
     val ctx = LocalContext.current
     val exporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri != null) try {
-            ctx.contentResolver.openOutputStream(uri)?.use { it.write(com.zapline.iptv.data.Backup.export(ctx).toByteArray()) }
+            ctx.contentResolver.openOutputStream(uri)?.use { it.write(com.zapline.iptv.data.Backup.export(com.zapline.iptv.data.Prefs(ctx)).toByteArray()) }
             android.widget.Toast.makeText(ctx, "Backup saved. It includes your playlist logins, so keep it private.", android.widget.Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
             android.widget.Toast.makeText(ctx, "Couldn't save the backup: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
@@ -938,7 +938,7 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit, onNavigate: (String) -
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) try {
             val text = ctx.contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) } ?: ""
-            val n = com.zapline.iptv.data.Backup.import(ctx, text)
+            val n = com.zapline.iptv.data.Backup.import(com.zapline.iptv.data.Prefs(ctx), text)
             vm.reloadFromPrefs()
             pinSet = p.adultPin.isNotEmpty()
             Palette.setAccent(androidx.compose.ui.graphics.Color(p.accent))
