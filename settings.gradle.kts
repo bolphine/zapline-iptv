@@ -17,4 +17,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "Zapline"
-include(":app", ":core")
+include(":app", ":core", ":desktop")

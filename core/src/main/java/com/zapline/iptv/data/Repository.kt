@@ -222,6 +222,15 @@ class Repository(
 
     // ---- TV guide ----
 
+    /** A guide from the web, or a local XMLTV file (file:// URL or a plain path, handy on a PC). */
+    private fun openGuide(u: String): java.io.InputStream {
+        if (u.startsWith("file:")) return File(java.net.URI(u)).inputStream()
+        val local = File(u)
+        if (!u.startsWith("http") && local.isFile) return local.inputStream()
+        val resp = get(u)
+        return resp.body!!.byteStream()
+    }
+
     fun epgAgeMs(): Long = if (epgFile.exists()) System.currentTimeMillis() - epgFile.lastModified() else Long.MAX_VALUE
 
     suspend fun loadCachedEpg(): EpgData? = withContext(Dispatchers.IO) { EpgCache.load(epgFile) }
@@ -250,8 +259,8 @@ class Repository(
         for (u in urls) {
             try {
                 progress("Downloading TV guide…")
-                get(u).use { resp ->
-                    val input = XmltvParser.maybeGunzip(resp.body!!.byteStream())
+                openGuide(u).use { raw ->
+                    val input = XmltvParser.maybeGunzip(raw)
                     val parser = newXmlParser()
                     parser.setFeature(org.xmlpull.v1.XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
                     parser.setInput(input, null)

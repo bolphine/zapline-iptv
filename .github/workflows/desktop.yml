@@ -1,0 +1,104 @@
+name: Windows app
+
+# Builds Zapline for Windows (a portable folder with Zapline.exe, its own Java runtime and libmpv) and
+# publishes it as a release whenever the desktop version (appVersion in desktop/build.gradle.kts) has none yet.
+on:
+  push:
+    branches: [main]
+    paths:
+      - desktop/**
+      - core/**
+      - .github/workflows/desktop.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Work out the version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ver=$(grep -oP 'appVersion\s*=\s*"\K[^"]+' desktop/build.gradle.kts)
+          tag="windows-v${ver}"
+          echo "ver=${ver}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          if gh release view "$tag" >/dev/null 2>&1; then echo "exists=true" >> "$GITHUB_OUTPUT"; else echo "exists=false" >> "$GITHUB_OUTPUT"; fi
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Get libmpv
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The libmpv build from shinchiro/mpv-winbuild-cmake (the one most Windows mpv players use).
+          url=$(gh api repos/shinchiro/mpv-winbuild-cmake/releases/latest --jq '.assets[] | select(.name | test("^mpv-dev-x86_64-[0-9]")) | .browser_download_url' | head -1)
+          echo "libmpv: $url"
+          [ -n "$url" ] || { echo "::error::Couldn't find a libmpv download"; exit 1; }
+          curl -fsSL -o "$RUNNER_TEMP/mpv-dev.7z" "$url"
+          mkdir -p "$RUNNER_TEMP/mpv" desktop/resources/windows
+          7z x -y -o"$RUNNER_TEMP/mpv" "$RUNNER_TEMP/mpv-dev.7z" >/dev/null
+          cp "$RUNNER_TEMP/mpv/libmpv-2.dll" desktop/resources/windows/
+          ls -la desktop/resources/windows
+
+      - name: Tests (with the real libmpv)
+        run: |
+          choco install ffmpeg -y --no-progress >/dev/null || echo "::warning::ffmpeg not installed; player tests will be skipped"
+          export ZAPLINE_MPV_DIR="$(cygpath -w "$PWD/desktop/resources/windows")"
+          ./gradlew :core:test :desktop:test --console=plain
+
+      - name: Test report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-test-report
+          path: desktop/build/reports/tests/
+
+      - name: Build
+        run: |
+          ./gradlew :desktop:createDistributable --console=plain
+          app=desktop/build/compose/binaries/main/app/Zapline
+          ls "$app"
+          test -f "$app/Zapline.exe"
+          find "$app" -name libmpv-2.dll | grep -q . || { echo "::error::libmpv-2.dll missing from the app"; exit 1; }
+          cd desktop/build/compose/binaries/main/app
+          7z a -tzip "$GITHUB_WORKSPACE/Zapline-Windows-${{ steps.version.outputs.ver }}.zip" Zapline >/dev/null
+          ls -la "$GITHUB_WORKSPACE"/*.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Zapline-Windows
+          path: Zapline-Windows-*.zip
+
+      - name: Publish release
+        if: steps.version.outputs.exists == 'false' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VER: ${{ steps.version.outputs.ver }}
+        run: |
+          cat > notes.md <<NOTES
+          Zapline for Windows 10 and 11, made for ultrawide screens (tuned for 5120×1440).
+
+          Unzip anywhere and run **Zapline\\Zapline.exe**. Nothing to install: Java and the player (libmpv) are included.
+          Windows may warn that the app is from an unknown publisher (it isn't code-signed): choose *More info → Run anyway*.
+          NOTES
+          gh release create "$TAG" "Zapline-Windows-${VER}.zip" --target "$GITHUB_SHA" --title "Zapline for Windows $VER" --notes-file notes.md --latest=false

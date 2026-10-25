@@ -17,6 +17,7 @@ import com.zapline.iptv.parse.PlaylistFilters
 import com.zapline.iptv.parse.Xtream
 import com.zapline.iptv.lang.Categories
 import com.zapline.iptv.lang.ChannelNames
+import com.zapline.iptv.lang.Quality
 import com.zapline.iptv.lang.LangRules
 import com.zapline.iptv.model.Channel
 import com.zapline.iptv.player.PlayEntry
@@ -114,6 +115,20 @@ data class VodView(
     /** Shows you're part-way through, newest first. */
     val seriesContinue: List<Pair<Channel, com.zapline.iptv.data.SeriesProgress>> = emptyList(),
 )
+
+/** A 4K stream: the channel, the version that is (or claims to be) 4K, and what checking found. */
+data class FourKItem(val entry: Entry, val variant: Tagged, val info: StreamInfo?)
+
+data class FourKView(
+    /** Checked and really 2160p. */
+    val verified: List<FourKItem> = emptyList(),
+    /** Says 4K, not checked yet. */
+    val labelled: List<FourKItem> = emptyList(),
+    /** Says 4K but the stream is lower (info has the real resolution). */
+    val notReally: List<FourKItem> = emptyList(),
+) {
+    val total get() = verified.size + labelled.size + notReally.size
+}
 
 /** Everything that matches a search, across live TV, the guide, films and series. */
 data class SearchResults(
@@ -224,7 +239,13 @@ class MainViewModel(private val platform: Platform, scope: kotlinx.coroutines.Co
     /** Health changes, at most every few seconds, so a running check doesn't re-sort 10,000 channels continuously. */
     private val healthTick = MutableStateFlow(0)
 
-    private val entries: StateFlow<List<Entry>> = combine(tagged, hiddenGroups, healthTick) { t, hidden, _ ->
+    /** Prefer the highest-quality version of each channel (PC); otherwise the most reliable (phone). */
+    val preferHighest = MutableStateFlow(prefs.preferHighest)
+    fun setPreferHighest(on: Boolean) { prefs.preferHighest = on; preferHighest.value = on }
+
+    private val sortInputs = combine(hiddenGroups, healthTick, preferHighest) { h, _, p -> h to p }
+
+    private val entries: StateFlow<List<Entry>> = combine(tagged, sortInputs) { t, (hidden, highest) ->
         val source = taggedFrom
         val byKey = LinkedHashMap<String, MutableList<Tagged>>()
         for (x in t) {
@@ -233,7 +254,12 @@ class MainViewModel(private val platform: Platform, scope: kotlinx.coroutines.Co
         }
         byKey.map { (key, vs) ->
             // Best working version first: ones that play, by picture then sound; then unchecked; failed ones last.
-            val sorted = if (vs.size == 1) vs else vs.sortedWith(
+            val sorted = if (vs.size == 1) vs else if (highest) vs.sortedWith(
+                // Highest quality first: checked versions by what they really are, unchecked ones by their label.
+                compareBy<Tagged> { v -> Health[v.ch.url].let { s -> when { s == null || s.state == StreamInfo.BUSY || s.ok -> 0; s.suspect -> 1; else -> 2 } } }
+                    .thenByDescending { v -> expectedScore(v.ch) }
+                    .thenBy { ChannelNames.qualityRank(it.ch.name) }
+            ) else vs.sortedWith(
                 compareBy<Tagged> { v -> Health[v.ch.url].let { s -> when { s == null || s.state == StreamInfo.BUSY -> 1; s.ok -> 0; s.suspect -> 2; else -> 3 } } }
                     .thenByDescending { v -> Health[v.ch.url]?.score ?: 0L }
                     .thenBy { ChannelNames.qualityRank(it.ch.name) }
@@ -664,6 +690,14 @@ class MainViewModel(private val platform: Platform, scope: kotlinx.coroutines.Co
 
     val healthScan = Health.scan
 
+    /** What a version is (checked) or probably is (its label), on [StreamInfo.score]'s scale. */
+    private fun expectedScore(c: Channel): Long {
+        val s = Health[c.url]
+        if (s != null && s.ok && s.height > 0) return s.score
+        val h = Quality.labelledHeight(c.name, c.group).takeIf { it > 0 } ?: 900
+        return h * 10L * 1_000_000L
+    }
+
     /** Every version of every channel inside the language and country filters (adult only once unlocked). */
     fun checkTargets(): List<Pair<String, Channel>> {
         val langs = langFilter.value; val regions = regionFilter.value
@@ -676,6 +710,45 @@ class MainViewModel(private val platform: Platform, scope: kotlinx.coroutines.Co
     }
 
     fun checkChannels(force: Boolean) = Health.startScan(checkTargets(), prefs, force)
+
+    // ---- 4K ----
+
+    /** Every 4K stream inside the language/country filters: confirmed, still to check, or not really 4K. */
+    val fourK: StateFlow<FourKView> = combine(entries, langFilter, regionFilter, healthTick) { es, langs, regions, _ ->
+        val verified = ArrayList<FourKItem>(); val labelled = ArrayList<FourKItem>(); val fake = ArrayList<FourKItem>()
+        for (e in es) {
+            if (!(langs.isEmpty() || e.lang in langs) || !(regions.isEmpty() || e.region in regions)) continue
+            if (e.category == Categories.ADULT) continue
+            val cands = e.variants.filter { v ->
+                val s = Health[v.ch.url]
+                Quality.labelled4k(v.ch.name, v.ch.group) || (s != null && s.ok && s.height >= 2000)
+            }
+            if (cands.isEmpty()) continue
+            val real = cands.firstOrNull { Health[it.ch.url]?.let { s -> s.ok && s.height >= 2000 } == true }
+            when {
+                real != null -> verified += FourKItem(e, real, Health[real.ch.url])
+                cands.any { Health[it.ch.url].let { s -> s == null || s.state == StreamInfo.BUSY || s.suspect } } ->
+                    labelled += FourKItem(e, cands.first { Health[it.ch.url].let { s -> s == null || s.state == StreamInfo.BUSY || s.suspect } }, null)
+                else -> {
+                    val best = cands.mapNotNull { v -> Health[v.ch.url]?.takeIf { it.ok }?.let { v to it } }.maxByOrNull { it.second.score }
+                    if (best != null) fake += FourKItem(e, best.first, best.second)
+                }
+            }
+        }
+        FourKView(verified, labelled, fake)
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, FourKView())
+
+    /** Films and series with 4K in the title or category. */
+    val fourKMovies: StateFlow<List<Channel>> = movies.map { l -> l.filter { Quality.labelled4k(it.name, it.group) } }
+        .flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val fourKSeries: StateFlow<List<Channel>> = series.map { l -> l.filter { Quality.labelled4k(it.name, it.group) } }
+        .flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** Checks only the 4K-labelled streams, so you find out quickly which are real. */
+    fun check4k(force: Boolean = true) {
+        val targets = checkTargets().filter { (_, ch) -> Quality.labelled4k(ch.name, ch.group) }
+        Health.startScan(targets, prefs, force)
+    }
     fun stopChecking() = Health.stopScan()
     fun forgetHealth() { Health.stopScan(); Health.clear() }
 

@@ -14,13 +14,22 @@ jobs:
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 21
       - uses: gradle/actions/setup-gradle@v4
       - name: Unit and UI tests
-        run: ./gradlew testDebugUnitTest --console=plain
+        run: ./gradlew testDebugUnitTest :core:test :desktop:test --console=plain
       - name: Test report
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: test-report
-          path: app/build/reports/tests/
+          path: |
+            app/build/reports/tests/
+            core/build/reports/tests/
+            desktop/build/reports/tests/
+      - name: Windows app screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-screens
+          path: desktop/build/screens/

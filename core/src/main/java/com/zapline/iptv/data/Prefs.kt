@@ -81,6 +81,13 @@ class Prefs(val p: KeyValueStore) {
         set(v) = p.edit().putBoolean("ambient", v).apply()
     /** Series progress (JSON), see SeriesWatch. */
     var seriesJson: String get() = str("series", "{}"); set(v) = put("series", v)
+    /**
+     * Play each channel's highest-quality version first (4K over 1080p), judging unchecked versions by their
+     * label. Off on the phone (saves data), on for the PC app.
+     */
+    var preferHighest: Boolean
+        get() = p.getBoolean("preferHighest", false)
+        set(v) = p.edit().putBoolean("preferHighest", v).apply()
     /** Check channels in the background (Wi-Fi only). */
     var autoCheck: Boolean
         get() = p.getBoolean("autoCheck", true)
